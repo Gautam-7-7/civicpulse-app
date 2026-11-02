@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+civicpulse-app/node_modules/
+
+# Next.js Build Output
+.next/
+civicpulse-app/.next/
+out/
+civicpulse-app/out/
+
+# Environment files
+.env*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# OS / System
+.DS_Store
+Thumbs.db
+
