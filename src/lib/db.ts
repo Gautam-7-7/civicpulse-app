@@ -1,5 +1,5 @@
 import mysql from 'mysql2/promise';
-import type { Pool } from 'mysql2/promise';
+import type { Pool, PoolConnection } from 'mysql2/promise';
 
 let pool: Pool | null = null;
 
@@ -19,6 +19,10 @@ export function getDbPool(): Pool {
     });
   }
   return pool;
+}
+
+export async function getConnection(): Promise<PoolConnection> {
+  return await getDbPool().getConnection();
 }
 
 export async function resetDbPool(): Promise<void> {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { executeQuery } from '@/lib/db';
+import { executeQuery, getConnection } from '@/lib/db';
 
 export async function POST(
   request: NextRequest,
@@ -44,30 +44,57 @@ export async function POST(
       );
     }
 
-    // Deactivate prior assignments
-    await executeQuery('UPDATE assignments SET is_active = FALSE WHERE complaint_id = ?', [complaintId]);
+    // ACID Transaction for manual staff assignment
+    const conn = await getConnection();
+    try {
+      await conn.beginTransaction();
 
-    // Insert new assignment
-    await executeQuery(
-      'INSERT INTO assignments (complaint_id, staff_id, is_active) VALUES (?, ?, TRUE)',
-      [complaintId, Number(staff_id)]
-    );
+      // 1. Fetch currently active assignment to balance previous staff load
+      const [old]: any = await conn.query(
+        'SELECT staff_id FROM assignments WHERE complaint_id = ? AND is_active = TRUE',
+        [complaintId]
+      );
 
-    // Update staff active load
-    await executeQuery(
-      'UPDATE staff_profiles SET active_load = active_load + 1 WHERE staff_id = ?',
-      [Number(staff_id)]
-    );
+      // 2. Deactivate previous assignments for this complaint
+      await conn.query('UPDATE assignments SET is_active = FALSE WHERE complaint_id = ?', [complaintId]);
 
-    // Update complaint status to 'assigned'
-    await executeQuery(
-      "UPDATE complaints SET status = 'assigned' WHERE complaint_id = ?",
-      [complaintId]
-    );
+      // 3. Decrement active load for previously assigned staff (never below 0)
+      if (old && old.length > 0) {
+        await conn.query(
+          'UPDATE staff_profiles SET active_load = GREATEST(active_load - 1, 0) WHERE staff_id = ?',
+          [old[0].staff_id]
+        );
+      }
+
+      // 4. Create new active assignment
+      await conn.query(
+        'INSERT INTO assignments (complaint_id, staff_id, is_active) VALUES (?, ?, TRUE)',
+        [complaintId, Number(staff_id)]
+      );
+
+      // 5. Increment active load for newly assigned staff
+      await conn.query(
+        'UPDATE staff_profiles SET active_load = active_load + 1 WHERE staff_id = ?',
+        [Number(staff_id)]
+      );
+
+      // 6. Transition complaint status to 'assigned'
+      await conn.query(
+        "UPDATE complaints SET status = 'assigned' WHERE complaint_id = ?",
+        [complaintId]
+      );
+
+      await conn.commit();
+    } catch (txError) {
+      await conn.rollback();
+      throw txError;
+    } finally {
+      conn.release();
+    }
 
     return NextResponse.json({
       success: true,
-      message: 'Staff member assigned successfully',
+      message: 'Staff member assigned successfully (ACID transaction committed)',
     });
   } catch (error: any) {
     return NextResponse.json(
